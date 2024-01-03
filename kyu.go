@@ -54,13 +54,10 @@ type Middleware func(next Handler) Handler
 var _ Handler = HandlerFunc(nil)
 
 type Mux struct {
-	mu       sync.RWMutex
 	handlers map[string]Handler
 }
 
 func (m *Mux) Handle(kind string, handler Handler) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	if _, exists := m.handlers[kind]; exists {
 		panic("handler already exists for " + kind)
 	}
@@ -71,14 +68,7 @@ func (m *Mux) Handle(kind string, handler Handler) {
 }
 
 func (m *Mux) Process(ctx context.Context, job *Job) error {
-	handler := m.handler(job.Kind)
-	return handler.Process(ctx, job)
-}
-
-func (m *Mux) handler(kind string) Handler {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.handlers[kind]
+	return m.handlers[job.Kind].Process(ctx, job)
 }
 
 var _ Handler = new(Mux)
