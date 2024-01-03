@@ -89,6 +89,7 @@ type Server struct {
 	d Dequeuer
 	h Handler
 
+	sem           chan struct{}
 	wg            sync.WaitGroup
 	isShuttedDown atomic.Bool
 }
@@ -133,14 +134,26 @@ func (s *Server) process() error {
 		return nil
 	}
 
+	maxConcurrency := s.MaxConcurrency
+	if maxConcurrency == 0 {
+		maxConcurrency = 10
+	}
+	if s.sem == nil {
+		s.sem = make(chan struct{}, maxConcurrency)
+	}
+
 	var deadline time.Time
 	if s.ProcessTimeout != 0 {
 		deadline = time.Now().Add(s.ProcessTimeout)
 	}
 
+	s.sem <- struct{}{}
 	s.wg.Add(1)
 	go func(ctx context.Context, job *Job) {
-		defer s.wg.Done()
+		defer func() {
+			s.wg.Done()
+			<-s.sem
+		}()
 
 		if !deadline.IsZero() {
 			var cancel context.CancelFunc
