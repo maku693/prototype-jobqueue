@@ -84,11 +84,8 @@ type Server struct {
 	MaxConcurrency int
 	ProcessTimeout time.Duration
 	OnHandlerError func(err error)
-
-	// TODO: publicize these
-
-	d Dequeuer
-	h Handler
+	Dequeuer       Dequeuer
+	Handler        Handler
 
 	sem           chan struct{}
 	wg            sync.WaitGroup
@@ -97,8 +94,8 @@ type Server struct {
 
 func NewServer(d Dequeuer, h Handler) *Server {
 	return &Server{
-		d: d,
-		h: h,
+		Dequeuer: d,
+		Handler:  h,
 	}
 }
 
@@ -126,7 +123,11 @@ func (s *Server) process() error {
 
 	ctx := context.Background()
 
-	job, err := s.d.Dequeue(ctx)
+	if s.Dequeuer == nil {
+		panic("dequeuer is not set")
+	}
+
+	job, err := s.Dequeuer.Dequeue(ctx)
 	if errors.Is(err, ErrNoJobsEnqueued) {
 		return err
 	}
@@ -162,12 +163,15 @@ func (s *Server) process() error {
 			defer cancel()
 		}
 
-		if err := s.h.Process(ctx, job); err != nil {
+		if s.Handler == nil {
+			panic("handler is not set")
+		}
+		if err := s.Handler.Process(ctx, job); err != nil {
 			s.onHandlerError(err)
 			return
 		}
 
-		if err := s.d.Delete(ctx, job); err != nil {
+		if err := s.Dequeuer.Delete(ctx, job); err != nil {
 			s.onHandlerError(err)
 		}
 	}(ctx, job)
