@@ -65,7 +65,8 @@ func (b *Broker) Handle(kind string, handler Handler) {
 }
 
 func (b *Broker) Process(ctx context.Context, job *Job) error {
-	return b.handler(job.Kind).Process(ctx, job)
+	handler := b.handler(job.Kind)
+	return handler.Process(ctx, job)
 }
 
 func (b *Broker) handler(kind string) Handler {
@@ -77,13 +78,17 @@ func (b *Broker) handler(kind string) Handler {
 var _ Handler = new(Broker)
 
 type Server struct {
+	MaxConcurrency int
 	ProcessTimeout time.Duration
-	OnError        func(err error)
-	d              Dequeuer
-	h              Handler
-	wg             sync.WaitGroup
-	isShuttedDown  atomic.Bool
-	// concurrency
+	OnHandlerError func(err error)
+
+	// TODO: publicize these
+
+	d Dequeuer
+	h Handler
+
+	wg            sync.WaitGroup
+	isShuttedDown atomic.Bool
 }
 
 func NewServer(d Dequeuer, h Handler) *Server {
@@ -122,7 +127,7 @@ func (s *Server) process() error {
 		return err
 	}
 	if err != nil {
-		s.handleError(err)
+		s.onHandlerError(err)
 		return nil
 	}
 
@@ -142,23 +147,23 @@ func (s *Server) process() error {
 		}
 
 		if err := s.h.Process(ctx, job); err != nil {
-			s.handleError(err)
+			s.onHandlerError(err)
 			return
 		}
 
 		if err := s.d.Delete(ctx, job); err != nil {
-			s.handleError(err)
+			s.onHandlerError(err)
 		}
 	}(ctx, job)
 
 	return nil
 }
 
-func (s *Server) handleError(err error) {
-	if s.OnError == nil {
+func (s *Server) onHandlerError(err error) {
+	if s.OnHandlerError == nil {
 		return
 	}
-	s.OnError(err)
+	s.OnHandlerError(err)
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -275,6 +280,7 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOption
 		MessageAttributes: messageAttrs,
 	}
 
+	// TODO:
 	// if fifo?
 	// 	dedupe_id
 	// 	group_id
@@ -313,15 +319,22 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// TODO: defaulting
+	maxNumberOfMessages := d.MaxNumberOfMessages
+	visibilityTimeout := d.VisibilityTimeout
+	waitTimeSeconds := d.WaitTimeSeconds
+
+	// TODO: FIFO
+
 	if len(d.pendingMessages) == 0 {
 		res, err := d.Client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 			QueueUrl:                new(string),
 			AttributeNames:          []types.QueueAttributeName{},
-			MaxNumberOfMessages:     d.MaxNumberOfMessages,
+			MaxNumberOfMessages:     maxNumberOfMessages,
 			MessageAttributeNames:   []string{},
 			ReceiveRequestAttemptId: new(string),
-			VisibilityTimeout:       d.VisibilityTimeout,
-			WaitTimeSeconds:         d.WaitTimeSeconds,
+			VisibilityTimeout:       visibilityTimeout,
+			WaitTimeSeconds:         waitTimeSeconds,
 		})
 		if err != nil {
 			return nil, err
