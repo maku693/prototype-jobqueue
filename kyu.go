@@ -240,16 +240,15 @@ var _ interface {
 // ---
 
 type SQSEnqueuer struct {
-	client   *sqs.Client
-	queueUrl string
+	Client   *sqs.Client
+	QueueUrl string
 }
 
-func NewSQSEnqueuer(client *sqs.Client, defaultQueueUrl string, opts *SQSEnqueuerOptions) *SQSEnqueuer {
-	panic("not implemented")
-}
-
-type SQSEnqueuerOptions struct {
-	QueueUrl string // XXX
+func NewSQSEnqueuer(client *sqs.Client, queueUrl string) *SQSEnqueuer {
+	return &SQSEnqueuer{
+		Client:   client,
+		QueueUrl: queueUrl,
+	}
 }
 
 func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOptions) error {
@@ -271,7 +270,7 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOption
 
 	sendMessageInput := &sqs.SendMessageInput{
 		MessageBody:       aws.String(messageBody),
-		QueueUrl:          aws.String(e.queueUrl),
+		QueueUrl:          aws.String(e.QueueUrl),
 		DelaySeconds:      delaySeconds,
 		MessageAttributes: messageAttrs,
 	}
@@ -280,7 +279,7 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOption
 	// 	dedupe_id
 	// 	group_id
 
-	_, err := e.client.SendMessage(ctx, sendMessageInput)
+	_, err := e.Client.SendMessage(ctx, sendMessageInput)
 	if err != nil {
 		return err
 	}
@@ -291,22 +290,86 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOption
 var _ Enqueuer = new(SQSEnqueuer)
 
 type SQSDequeuer struct {
-	queueUrl            string
-	maxNumberOfMessages int32
-	visibilityTimeout   int32
-	waitTimeSeconds     int32
+	Client              *sqs.Client
+	QueueUrl            string
+	MaxNumberOfMessages int32
+	VisibilityTimeout   int32
+	WaitTimeSeconds     int32
+
+	mu              sync.Mutex
+	pendingMessages []types.Message
+	activeMessages  map[*Job]types.Message
 }
 
 func NewSQSDequeuer() *SQSDequeuer {
 	panic("unimplemented")
 }
 
-func (*SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
-	panic("unimplemented")
+var (
+	ErrMissingKyuKindAttribute = errors.New("missing kyu_kind attribute")
+)
+
+func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.pendingMessages) == 0 {
+		res, err := d.Client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl:                new(string),
+			AttributeNames:          []types.QueueAttributeName{},
+			MaxNumberOfMessages:     d.MaxNumberOfMessages,
+			MessageAttributeNames:   []string{},
+			ReceiveRequestAttemptId: new(string),
+			VisibilityTimeout:       d.VisibilityTimeout,
+			WaitTimeSeconds:         d.WaitTimeSeconds,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		d.pendingMessages = res.Messages
+	}
+
+	if len(d.pendingMessages) == 0 {
+		return nil, ErrNoJobsEnqueued
+	}
+
+	msg := d.pendingMessages[0]
+	d.pendingMessages = d.pendingMessages[1:]
+
+	kindAttr, ok := msg.MessageAttributes["kyu_kind"]
+	if !ok {
+		return nil, ErrMissingKyuKindAttribute
+	}
+
+	kind := *kindAttr.StringValue
+	job := &Job{
+		Kind: kind,
+		Data: []byte(*msg.Body),
+	}
+
+	d.activeMessages[job] = msg
+
+	return job, nil
 }
 
-func (*SQSDequeuer) Delete(ctx context.Context, j *Job) error {
-	panic("unimplemented")
+func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	msg := d.activeMessages[job]
+
+	_, err := d.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+		QueueUrl:      aws.String(d.QueueUrl),
+		ReceiptHandle: msg.ReceiptHandle,
+	})
+	if err != nil {
+		return err
+	}
+
+	delete(d.activeMessages, job)
+
+	return nil
 }
 
 var _ Dequeuer = new(SQSDequeuer)
