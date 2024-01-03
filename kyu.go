@@ -336,8 +336,11 @@ type SQSDequeuer struct {
 	activeMessages  map[*Job]types.Message
 }
 
-func NewSQSDequeuer() *SQSDequeuer {
-	panic("unimplemented")
+func NewSQSDequeuer(client *sqs.Client, queueUrl string) *SQSDequeuer {
+	return &SQSDequeuer{
+		Client:   client,
+		QueueUrl: queueUrl,
+	}
 }
 
 var (
@@ -390,6 +393,9 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 		Data: []byte(*msg.Body),
 	}
 
+	if d.activeMessages == nil {
+		d.activeMessages = make(map[*Job]types.Message)
+	}
 	d.activeMessages[job] = msg
 
 	return job, nil
