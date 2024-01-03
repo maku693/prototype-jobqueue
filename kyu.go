@@ -45,6 +45,8 @@ func (f HandlerFunc) Process(ctx context.Context, job *Job) error {
 	return f(ctx, job)
 }
 
+type Middleware func(next Handler) Handler
+
 var _ Handler = HandlerFunc(nil)
 
 type Broker struct {
