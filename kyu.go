@@ -2,9 +2,12 @@ package kyu
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -276,6 +279,8 @@ var _ interface {
 type SQSEnqueuer struct {
 	Client   *sqs.Client
 	QueueUrl string
+
+	MessageGroupId string
 }
 
 func NewSQSEnqueuer(client *sqs.Client, queueUrl string) *SQSEnqueuer {
@@ -286,8 +291,6 @@ func NewSQSEnqueuer(client *sqs.Client, queueUrl string) *SQSEnqueuer {
 }
 
 func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOptions) error {
-	messageBody := string(job.Data)
-
 	var delaySeconds int32
 	if performAt := opts.PerformAt; !performAt.IsZero() {
 		delaySeconds = int32(time.Now().Sub(performAt).Seconds())
@@ -303,16 +306,21 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOption
 	}
 
 	sendMessageInput := &sqs.SendMessageInput{
-		MessageBody:       aws.String(messageBody),
+		MessageBody:       aws.String(string(job.Data)),
 		QueueUrl:          aws.String(e.QueueUrl),
 		DelaySeconds:      delaySeconds,
 		MessageAttributes: messageAttrs,
 	}
 
-	// TODO:
-	// if fifo?
-	// 	dedupe_id
-	// 	group_id
+	if strings.HasSuffix(e.QueueUrl, ".fifo") {
+		sum := sha256.Sum256(job.Data)
+		msgDedupeId := hex.EncodeToString(sum[:])
+		sendMessageInput.MessageDeduplicationId = aws.String(msgDedupeId)
+
+		if e.MessageGroupId != "" {
+			sendMessageInput.MessageGroupId = aws.String(e.MessageGroupId)
+		}
+	}
 
 	_, err := e.Client.SendMessage(ctx, sendMessageInput)
 	if err != nil {
