@@ -203,9 +203,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 type InMemoryQueue struct {
-	mu           sync.RWMutex
-	jobs         []*Job
-	dequeuedJobs []*Job
+	mu         sync.RWMutex
+	jobs       []*Job
+	activeJobs []*Job
 }
 
 func (q *InMemoryQueue) Enqueue(ctx context.Context, job *Job, opts *EnqueueOptions) error {
@@ -238,7 +238,7 @@ func (q *InMemoryQueue) Dequeue(ctx context.Context) (*Job, error) {
 	}
 	job := q.jobs[0]
 	q.jobs = q.jobs[1:]
-	q.dequeuedJobs = append(q.dequeuedJobs, job)
+	q.activeJobs = append(q.activeJobs, job)
 
 	return job, nil
 }
@@ -246,7 +246,7 @@ func (q *InMemoryQueue) Dequeue(ctx context.Context) (*Job, error) {
 func (q *InMemoryQueue) Delete(ctx context.Context, j *Job) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.dequeuedJobs = slices.DeleteFunc(q.dequeuedJobs, func(k *Job) bool {
+	q.activeJobs = slices.DeleteFunc(q.activeJobs, func(k *Job) bool {
 		return k == j
 	})
 	return nil
