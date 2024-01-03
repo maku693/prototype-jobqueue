@@ -176,7 +176,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Millisecond):
+		default:
+			time.Sleep(time.Millisecond)
 		}
 	}
 }
