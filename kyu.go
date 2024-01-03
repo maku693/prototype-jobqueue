@@ -83,9 +83,11 @@ var _ Handler = new(Broker)
 type Server struct {
 	MaxConcurrency int
 	ProcessTimeout time.Duration
-	OnHandlerError func(err error)
-	Dequeuer       Dequeuer
-	Handler        Handler
+
+	Dequeuer        Dequeuer
+	Handler         Handler
+	OnDequeuerError func(err error)
+	OnHandlerError  func(err error)
 
 	sem           chan struct{}
 	wg            sync.WaitGroup
@@ -132,7 +134,7 @@ func (s *Server) process() error {
 		return err
 	}
 	if err != nil {
-		s.onHandlerError(err)
+		s.onDequeuerError(err)
 		return nil
 	}
 
@@ -172,7 +174,7 @@ func (s *Server) process() error {
 		}
 
 		if err := s.Dequeuer.Delete(ctx, job); err != nil {
-			s.onHandlerError(err)
+			s.onDequeuerError(err)
 		}
 	}(ctx, job)
 
@@ -184,6 +186,13 @@ func (s *Server) onHandlerError(err error) {
 		return
 	}
 	s.OnHandlerError(err)
+}
+
+func (s *Server) onDequeuerError(err error) {
+	if s.OnDequeuerError == nil {
+		return
+	}
+	s.OnDequeuerError(err)
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
