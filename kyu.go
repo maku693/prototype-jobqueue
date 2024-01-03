@@ -49,6 +49,21 @@ func (f HandlerFunc) Process(ctx context.Context, job *Job) error {
 	return f(ctx, job)
 }
 
+type Middleware func(next Handler) Handler
+
+func WithRecover(next Handler, recoverFunc RecoverFunc) Handler {
+	return HandlerFunc(func(ctx context.Context, job *Job) error {
+		defer func() {
+			if err := recover(); err != nil {
+				recoverFunc(ctx, job, err)
+			}
+		}()
+		return next.Process(ctx, job)
+	})
+}
+
+type RecoverFunc func(ctx context.Context, job *Job, err any)
+
 var _ Handler = HandlerFunc(nil)
 
 type Mux struct {
