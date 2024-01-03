@@ -325,11 +325,14 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOption
 var _ Enqueuer = new(SQSEnqueuer)
 
 type SQSDequeuer struct {
-	Client              *sqs.Client
-	QueueUrl            string
-	MaxNumberOfMessages int32
-	VisibilityTimeout   int32
-	WaitTimeSeconds     int32
+	Client   *sqs.Client
+	QueueUrl string
+
+	AttributeNames        []types.QueueAttributeName
+	MaxNumberOfMessages   int32
+	MessageAttributeNames []string
+	VisibilityTimeout     int32
+	WaitTimeSeconds       int32
 
 	mu              sync.Mutex
 	pendingMessages []types.Message
@@ -351,22 +354,38 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// TODO: defaulting
-	maxNumberOfMessages := d.MaxNumberOfMessages
-	visibilityTimeout := d.VisibilityTimeout
-	waitTimeSeconds := d.WaitTimeSeconds
-
-	// TODO: FIFO
-
 	if len(d.pendingMessages) == 0 {
+		attrNames := d.AttributeNames
+		if len(attrNames) == 0 {
+			attrNames = []types.QueueAttributeName{
+				types.QueueAttributeNameAll,
+			}
+		}
+
+		maxNumberOfMessages := d.MaxNumberOfMessages
+		if maxNumberOfMessages == 0 {
+			maxNumberOfMessages = 10
+		}
+
+		msgAttrNames := d.MessageAttributeNames
+		if len(msgAttrNames) == 0 {
+			msgAttrNames = []string{"All"}
+		}
+
+		visibilityTimeout := d.VisibilityTimeout
+
+		waitTimeSeconds := d.WaitTimeSeconds
+		if waitTimeSeconds == 0 {
+			waitTimeSeconds = 20
+		}
+
 		res, err := d.Client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
-			QueueUrl:                new(string),
-			AttributeNames:          []types.QueueAttributeName{},
-			MaxNumberOfMessages:     maxNumberOfMessages,
-			MessageAttributeNames:   []string{},
-			ReceiveRequestAttemptId: new(string),
-			VisibilityTimeout:       visibilityTimeout,
-			WaitTimeSeconds:         waitTimeSeconds,
+			QueueUrl:              aws.String(d.QueueUrl),
+			AttributeNames:        attrNames,
+			MaxNumberOfMessages:   maxNumberOfMessages,
+			MessageAttributeNames: msgAttrNames,
+			VisibilityTimeout:     visibilityTimeout,
+			WaitTimeSeconds:       waitTimeSeconds,
 		})
 		if err != nil {
 			return nil, err
