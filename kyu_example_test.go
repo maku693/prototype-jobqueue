@@ -33,8 +33,8 @@ func Example() {
 		}
 	}()
 
-	b := &Broker{}
-	b.Handle(
+	m := &Mux{}
+	m.Handle(
 		JobKindExample,
 		HandlerFunc(func(ctx context.Context, j *Job) error {
 			var v string
@@ -46,7 +46,7 @@ func Example() {
 		}),
 	)
 
-	s := NewServer(q, b)
+	s := NewServer(q, m)
 	go func() {
 		s.Serve()
 	}()

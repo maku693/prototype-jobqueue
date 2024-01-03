@@ -50,35 +50,35 @@ type Middleware func(next Handler) Handler
 
 var _ Handler = HandlerFunc(nil)
 
-type Broker struct {
+type Mux struct {
 	mu       sync.RWMutex
 	handlers map[string]Handler
 }
 
-func (b *Broker) Handle(kind string, handler Handler) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if _, exists := b.handlers[kind]; exists {
+func (m *Mux) Handle(kind string, handler Handler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.handlers[kind]; exists {
 		panic("handler already exists for " + kind)
 	}
-	if b.handlers == nil {
-		b.handlers = make(map[string]Handler)
+	if m.handlers == nil {
+		m.handlers = make(map[string]Handler)
 	}
-	b.handlers[kind] = handler
+	m.handlers[kind] = handler
 }
 
-func (b *Broker) Process(ctx context.Context, job *Job) error {
-	handler := b.handler(job.Kind)
+func (m *Mux) Process(ctx context.Context, job *Job) error {
+	handler := m.handler(job.Kind)
 	return handler.Process(ctx, job)
 }
 
-func (b *Broker) handler(kind string) Handler {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.handlers[kind]
+func (m *Mux) handler(kind string) Handler {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.handlers[kind]
 }
 
-var _ Handler = new(Broker)
+var _ Handler = new(Mux)
 
 type Server struct {
 	MaxConcurrency int

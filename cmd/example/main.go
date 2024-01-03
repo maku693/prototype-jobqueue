@@ -42,8 +42,8 @@ func main() {
 		}
 	}()
 
-	b := &kyu.Broker{}
-	b.Handle(
+	m := &kyu.Mux{}
+	m.Handle(
 		JobKindExample,
 		kyu.HandlerFunc(func(ctx context.Context, job *kyu.Job) error {
 			slog.Info("processing job", slog.Any("job", job))
@@ -57,8 +57,8 @@ func main() {
 		}),
 	)
 
-	s := kyu.NewServer(q, b)
-	s.OnError = func(err error) {
+	s := kyu.NewServer(q, m)
+	s.OnHandlerError = func(err error) {
 		slog.Error("error processing message", slog.Any("err", err))
 	}
 
