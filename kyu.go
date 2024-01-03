@@ -3,6 +3,7 @@ package kyu
 import (
 	"context"
 	"errors"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -136,7 +137,7 @@ func (s *Server) process() error {
 
 	maxConcurrency := s.MaxConcurrency
 	if maxConcurrency == 0 {
-		maxConcurrency = 10
+		maxConcurrency = runtime.NumCPU()
 	}
 	if s.sem == nil {
 		s.sem = make(chan struct{}, maxConcurrency)
