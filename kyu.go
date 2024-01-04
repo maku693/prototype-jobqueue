@@ -31,9 +31,7 @@ type EnqueueOptions struct {
 	PerformAt time.Time
 }
 
-var (
-	ErrNoJobsEnqueued = errors.New("no jobs enqueued")
-)
+var ErrNoJobsEnqueued = errors.New("no jobs enqueued")
 
 type Dequeuer interface {
 	Dequeue(ctx context.Context) (*Job, error)
@@ -112,9 +110,7 @@ func NewServer(d Dequeuer, h Handler) *Server {
 	}
 }
 
-var (
-	ErrServerShuttedDown = errors.New("server is shutted down")
-)
+var ErrServerShuttedDown = errors.New("server is shutted down")
 
 func (s *Server) Serve() error {
 	for {
@@ -364,10 +360,7 @@ func NewSQSDequeuer(client *sqs.Client, queueUrl string) *SQSDequeuer {
 	}
 }
 
-var (
-	ErrMissingKyuKindAttribute = errors.New("missing kyu_kind attribute")
-	ErrMessageNotInActive      = errors.New("message not in active")
-)
+var ErrMissingKyuKindAttribute = errors.New("missing kyu_kind attribute")
 
 func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	d.mu.Lock()
@@ -443,6 +436,8 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 
 	return job, nil
 }
+
+var ErrMessageNotInActive = errors.New("message not in active")
 
 func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
 	d.mu.Lock()
