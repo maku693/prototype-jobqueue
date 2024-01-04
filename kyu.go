@@ -72,7 +72,7 @@ type Mux struct {
 
 func (m *Mux) Handle(kind string, handler Handler) {
 	if _, exists := m.handlers[kind]; exists {
-		panic("handler already exists for " + kind)
+		panic("handler already registered for " + kind)
 	}
 	if m.handlers == nil {
 		m.handlers = make(map[string]Handler)
@@ -81,7 +81,11 @@ func (m *Mux) Handle(kind string, handler Handler) {
 }
 
 func (m *Mux) Process(ctx context.Context, job *Job) error {
-	return m.handlers[job.Kind].Process(ctx, job)
+	handler, ok := m.handlers[job.Kind]
+	if !ok {
+		return errors.New("no handler registered for " + job.Kind)
+	}
+	return handler.Process(ctx, job)
 }
 
 var _ Handler = new(Mux)
