@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"runtime"
 	"slices"
@@ -23,21 +22,12 @@ import (
 type Job struct {
 	ID   string
 	Kind string
-	Data any
-}
-
-type JobMarshaler interface {
-	MarshalJob(job *Job) ([]byte, error)
-}
-
-type JobUnmarshaler interface {
-	UnmarshalJob(data []byte) (*Job, error)
+	Data []byte
 }
 
 type Enqueuer interface {
-	Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) error
-	// Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) (string, error)
-	// Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) (*Job, error)
+	Enqueue(ctx context.Context, kind string, data []byte, opts *EnqueueOptions) (string, error)
+	// Enqueue(ctx context.Context, kind string, data []byte, opts *EnqueueOptions) (*EnqueueResult, error)
 }
 
 type EnqueueOptions struct {
@@ -48,8 +38,8 @@ var ErrNoJobsEnqueued = errors.New("no jobs enqueued")
 
 type Dequeuer interface {
 	Dequeue(ctx context.Context) (*Job, error)
-	Delete(ctx context.Context, job *Job) error
-	// Delete(ctx context.Context, jobID string) error
+	// Dequeue(ctx context.Context) (*DequeueResult, error)
+	Delete(ctx context.Context, jobID string) error
 }
 
 type Handler interface {
@@ -194,7 +184,7 @@ func (s *Server) process() error {
 			return
 		}
 
-		if err := s.Dequeuer.Delete(ctx, job); err != nil {
+		if err := s.Dequeuer.Delete(ctx, job.ID); err != nil {
 			s.onDequeuerError(err)
 		}
 	}(ctx, job)
@@ -249,15 +239,16 @@ type InMemoryQueue struct {
 // 	performAt time.Time
 // }
 
-func (q *InMemoryQueue) Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) error {
+func (q *InMemoryQueue) Enqueue(ctx context.Context, kind string, data []byte, opts *EnqueueOptions) (string, error) {
 	idbytes := make([]byte, 16)
 	_, err := rand.Read(idbytes)
 	if err != nil {
-		return err
+		return "", err
 	}
+	id := hex.EncodeToString(idbytes)
 
 	job := &Job{
-		ID:   hex.EncodeToString(idbytes),
+		ID:   id,
 		Kind: kind,
 		Data: data,
 	}
@@ -276,12 +267,12 @@ func (q *InMemoryQueue) Enqueue(ctx context.Context, kind string, data any, opts
 			<-timer.C
 			appendJob()
 		}()
-		return nil
+		return job.ID, nil
 	}
 
 	appendJob()
 
-	return nil
+	return job.ID, nil
 }
 
 func (q *InMemoryQueue) Dequeue(ctx context.Context) (*Job, error) {
@@ -297,11 +288,11 @@ func (q *InMemoryQueue) Dequeue(ctx context.Context) (*Job, error) {
 	return job, nil
 }
 
-func (q *InMemoryQueue) Delete(ctx context.Context, j *Job) error {
+func (q *InMemoryQueue) Delete(ctx context.Context, jobID string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.activeJobs = slices.DeleteFunc(q.activeJobs, func(k *Job) bool {
-		return k == j
+		return k.ID == jobID
 	})
 	return nil
 }
@@ -327,7 +318,7 @@ func NewSQSEnqueuer(client *sqs.Client, queueUrl string) *SQSEnqueuer {
 	}
 }
 
-func (e *SQSEnqueuer) Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) error {
+func (e *SQSEnqueuer) Enqueue(ctx context.Context, kind string, data []byte, opts *EnqueueOptions) (string, error) {
 	var delaySeconds int32
 	if performAt := opts.PerformAt; !performAt.IsZero() {
 		delaySeconds = int32(time.Now().Sub(performAt).Seconds())
@@ -337,25 +328,21 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, kind string, data any, opts *
 	}
 
 	messageAttrs := make(map[string]types.MessageAttributeValue)
-	messageAttrs["kyu_kind"] = types.MessageAttributeValue{
+	messageAttrs["jobqueue_kind"] = types.MessageAttributeValue{
 		DataType:    aws.String("String"),
 		StringValue: aws.String(kind),
 	}
-
-	messageBody, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-
+	// "jobqueue_id"
+	messageBody := base64.StdEncoding.EncodeToString(data)
 	sendMessageInput := &sqs.SendMessageInput{
-		MessageBody:       aws.String(string(messageBody)),
+		MessageBody:       aws.String(messageBody),
 		QueueUrl:          aws.String(e.QueueUrl),
 		DelaySeconds:      delaySeconds,
 		MessageAttributes: messageAttrs,
 	}
 
 	if strings.HasSuffix(e.QueueUrl, ".fifo") {
-		sum := sha256.Sum256(messageBody)
+		sum := sha256.Sum256(data)
 		msgDedupeId := hex.EncodeToString(sum[:])
 		sendMessageInput.MessageDeduplicationId = aws.String(msgDedupeId)
 
@@ -364,12 +351,12 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, kind string, data any, opts *
 		}
 	}
 
-	_, err = e.Client.SendMessage(ctx, sendMessageInput)
+	_, err := e.Client.SendMessage(ctx, sendMessageInput)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	return nil
+	return "", nil
 }
 
 var _ Enqueuer = new(SQSEnqueuer)
@@ -396,12 +383,13 @@ func NewSQSDequeuer(client *sqs.Client, queueUrl string) *SQSDequeuer {
 	}
 }
 
-var ErrMissingKyuKindAttribute = errors.New("missing kyu_kind attribute")
+var ErrMissingKyuKindAttribute = errors.New("missing jobqueue_kind attribute")
 
 func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// un-batch?
 	if len(d.receivedMessages) == 0 {
 		attrNames := d.AttributeNames
 		if len(attrNames) == 0 {
@@ -449,7 +437,7 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	msg := d.receivedMessages[0]
 	d.receivedMessages = d.receivedMessages[1:]
 
-	kindAttr, ok := msg.MessageAttributes["kyu_kind"]
+	kindAttr, ok := msg.MessageAttributes["jobqueue_kind"]
 	if !ok {
 		return nil, ErrMissingKyuKindAttribute
 	}
@@ -476,11 +464,11 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 
 var ErrReceiptHandleNotFound = errors.New("receipt handle not found")
 
-func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
+func (d *SQSDequeuer) Delete(ctx context.Context, jobID string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	receiptHandle, ok := d.receiptHandles[job.ID]
+	receiptHandle, ok := d.receiptHandles[jobID]
 	if !ok {
 		return ErrReceiptHandleNotFound
 	}
@@ -493,7 +481,7 @@ func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
 		return err
 	}
 
-	delete(d.receiptHandles, job.ID)
+	delete(d.receiptHandles, jobID)
 
 	return nil
 }
