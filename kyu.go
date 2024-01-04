@@ -3,6 +3,7 @@ package kyu
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"runtime"
@@ -312,8 +313,10 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOption
 		StringValue: aws.String(job.Kind),
 	}
 
+	messageBody := base64.StdEncoding.EncodeToString(job.Data)
+
 	sendMessageInput := &sqs.SendMessageInput{
-		MessageBody:       aws.String(string(job.Data)),
+		MessageBody:       aws.String(messageBody),
 		QueueUrl:          aws.String(e.QueueUrl),
 		DelaySeconds:      delaySeconds,
 		MessageAttributes: messageAttrs,
@@ -420,11 +423,16 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	if !ok {
 		return nil, ErrMissingKyuKindAttribute
 	}
-
 	kind := *kindAttr.StringValue
+
+	data, err := base64.StdEncoding.DecodeString(*msg.Body)
+	if err != nil {
+		return nil, err
+	}
+
 	job := &Job{
 		Kind: kind,
-		Data: []byte(*msg.Body),
+		Data: data,
 	}
 
 	if d.activeMessages == nil {
