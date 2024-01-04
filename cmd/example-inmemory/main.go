@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,20 +22,18 @@ func main() {
 
 	go func() {
 		for i := 0; i < 10; i++ {
-			data, _ := json.Marshal(fmt.Sprintf("hello (%d)", i))
-			job := &jobqueue.Job{
-				Kind: JobKindExample,
-				Data: data,
-			}
-			slog.Info("enqueueing job", slog.Any("job", job))
+			kind := JobKindExample
+			data := fmt.Sprintf("hello (%d)", i)
+			slog.Info("enqueueing job", slog.String("kind", kind), slog.Any("data", data))
 			q.Enqueue(
 				context.Background(),
-				job,
+				JobKindExample,
+				data,
 				&jobqueue.EnqueueOptions{
 					PerformAt: time.Now().Add(5 * time.Second),
 				},
 			)
-			slog.Info("job enqueued", slog.Any("job", job))
+			// slog.Info("job enqueued", slog.Any("id", id))
 
 			time.Sleep(1 * time.Second)
 		}
@@ -48,11 +45,7 @@ func main() {
 		jobqueue.HandlerFunc(func(ctx context.Context, job *jobqueue.Job) error {
 			slog.Info("processing job", slog.Any("job", job))
 			// time.Sleep(10 * time.Second)
-			var v string
-			if err := json.Unmarshal(job.Data, &v); err != nil {
-				return err
-			}
-			slog.Info("job processed", slog.String("data", v))
+			slog.Info("job processed", slog.Any("job", job))
 			return nil
 		}),
 	)

@@ -2,9 +2,11 @@ package jobqueue
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"runtime"
 	"slices"
@@ -18,15 +20,24 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-// Should encode ID and Kind into Data?
-
 type Job struct {
+	ID   string
 	Kind string
-	Data []byte
+	Data any
+}
+
+type JobMarshaler interface {
+	MarshalJob(job *Job) ([]byte, error)
+}
+
+type JobUnmarshaler interface {
+	UnmarshalJob(data []byte) (*Job, error)
 }
 
 type Enqueuer interface {
-	Enqueue(ctx context.Context, job *Job, opts *EnqueueOptions) error
+	Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) error
+	// Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) (string, error)
+	// Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) (*Job, error)
 }
 
 type EnqueueOptions struct {
@@ -38,6 +49,7 @@ var ErrNoJobsEnqueued = errors.New("no jobs enqueued")
 type Dequeuer interface {
 	Dequeue(ctx context.Context) (*Job, error)
 	Delete(ctx context.Context, job *Job) error
+	// Delete(ctx context.Context, jobID string) error
 }
 
 type Handler interface {
@@ -229,9 +241,27 @@ type InMemoryQueue struct {
 	mu         sync.RWMutex
 	jobs       []*Job
 	activeJobs []*Job
+	// scheduledJobs []*scheduledJob
 }
 
-func (q *InMemoryQueue) Enqueue(ctx context.Context, job *Job, opts *EnqueueOptions) error {
+// type scheduledJob struct {
+// 	job       *Job
+// 	performAt time.Time
+// }
+
+func (q *InMemoryQueue) Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) error {
+	idbytes := make([]byte, 16)
+	_, err := rand.Read(idbytes)
+	if err != nil {
+		return err
+	}
+
+	job := &Job{
+		ID:   hex.EncodeToString(idbytes),
+		Kind: kind,
+		Data: data,
+	}
+
 	// TODO: cleanup
 	appendJob := func() {
 		q.mu.Lock()
@@ -297,7 +327,7 @@ func NewSQSEnqueuer(client *sqs.Client, queueUrl string) *SQSEnqueuer {
 	}
 }
 
-func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOptions) error {
+func (e *SQSEnqueuer) Enqueue(ctx context.Context, kind string, data any, opts *EnqueueOptions) error {
 	var delaySeconds int32
 	if performAt := opts.PerformAt; !performAt.IsZero() {
 		delaySeconds = int32(time.Now().Sub(performAt).Seconds())
@@ -309,20 +339,23 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOption
 	messageAttrs := make(map[string]types.MessageAttributeValue)
 	messageAttrs["kyu_kind"] = types.MessageAttributeValue{
 		DataType:    aws.String("String"),
-		StringValue: aws.String(job.Kind),
+		StringValue: aws.String(kind),
 	}
 
-	messageBody := base64.StdEncoding.EncodeToString(job.Data)
+	messageBody, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
 
 	sendMessageInput := &sqs.SendMessageInput{
-		MessageBody:       aws.String(messageBody),
+		MessageBody:       aws.String(string(messageBody)),
 		QueueUrl:          aws.String(e.QueueUrl),
 		DelaySeconds:      delaySeconds,
 		MessageAttributes: messageAttrs,
 	}
 
 	if strings.HasSuffix(e.QueueUrl, ".fifo") {
-		sum := sha256.Sum256(job.Data)
+		sum := sha256.Sum256(messageBody)
 		msgDedupeId := hex.EncodeToString(sum[:])
 		sendMessageInput.MessageDeduplicationId = aws.String(msgDedupeId)
 
@@ -331,7 +364,7 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, job *Job, opts *EnqueueOption
 		}
 	}
 
-	_, err := e.Client.SendMessage(ctx, sendMessageInput)
+	_, err = e.Client.SendMessage(ctx, sendMessageInput)
 	if err != nil {
 		return err
 	}
@@ -353,7 +386,7 @@ type SQSDequeuer struct {
 
 	mu               sync.Mutex
 	receivedMessages []types.Message
-	dequeuedMessages map[*Job]types.Message
+	receiptHandles   map[string]*string
 }
 
 func NewSQSDequeuer(client *sqs.Client, queueUrl string) *SQSDequeuer {
@@ -428,38 +461,39 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	}
 
 	job := &Job{
+		ID:   *msg.MessageId,
 		Kind: kind,
 		Data: data,
 	}
 
-	if d.dequeuedMessages == nil {
-		d.dequeuedMessages = make(map[*Job]types.Message)
+	if d.receiptHandles == nil {
+		d.receiptHandles = make(map[string]*string)
 	}
-	d.dequeuedMessages[job] = msg
+	d.receiptHandles[job.ID] = msg.ReceiptHandle
 
 	return job, nil
 }
 
-var ErrMessageNotDequeued = errors.New("message not dequeued")
+var ErrReceiptHandleNotFound = errors.New("receipt handle not found")
 
 func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	msg, ok := d.dequeuedMessages[job]
+	receiptHandle, ok := d.receiptHandles[job.ID]
 	if !ok {
-		return ErrMessageNotDequeued
+		return ErrReceiptHandleNotFound
 	}
 
 	_, err := d.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      aws.String(d.QueueUrl),
-		ReceiptHandle: msg.ReceiptHandle,
+		ReceiptHandle: receiptHandle,
 	})
 	if err != nil {
 		return err
 	}
 
-	delete(d.dequeuedMessages, job)
+	delete(d.receiptHandles, job.ID)
 
 	return nil
 }
