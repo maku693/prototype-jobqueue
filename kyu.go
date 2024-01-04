@@ -349,8 +349,8 @@ type SQSDequeuer struct {
 	WaitTimeSeconds       int32
 
 	mu              sync.Mutex
-	pendingMessages []types.Message
-	activeMessages  map[*Job]types.Message
+	receivedMessages []types.Message
+	dequeuedMessages map[*Job]types.Message
 }
 
 func NewSQSDequeuer(client *sqs.Client, queueUrl string) *SQSDequeuer {
@@ -366,7 +366,7 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if len(d.pendingMessages) == 0 {
+	if len(d.receivedMessages) == 0 {
 		attrNames := d.AttributeNames
 		if len(attrNames) == 0 {
 			attrNames = []types.QueueAttributeName{
@@ -403,15 +403,15 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 			return nil, err
 		}
 
-		d.pendingMessages = res.Messages
+		d.receivedMessages = res.Messages
 	}
 
-	if len(d.pendingMessages) == 0 {
+	if len(d.receivedMessages) == 0 {
 		return nil, ErrNoJobsEnqueued
 	}
 
-	msg := d.pendingMessages[0]
-	d.pendingMessages = d.pendingMessages[1:]
+	msg := d.receivedMessages[0]
+	d.receivedMessages = d.receivedMessages[1:]
 
 	kindAttr, ok := msg.MessageAttributes["kyu_kind"]
 	if !ok {
@@ -429,10 +429,10 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 		Data: data,
 	}
 
-	if d.activeMessages == nil {
-		d.activeMessages = make(map[*Job]types.Message)
+	if d.dequeuedMessages == nil {
+		d.dequeuedMessages = make(map[*Job]types.Message)
 	}
-	d.activeMessages[job] = msg
+	d.dequeuedMessages[job] = msg
 
 	return job, nil
 }
@@ -443,7 +443,7 @@ func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	msg, ok := d.activeMessages[job]
+	msg, ok := d.dequeuedMessages[job]
 	if !ok {
 		return ErrMessageNotInActive
 	}
@@ -456,7 +456,7 @@ func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
 		return err
 	}
 
-	delete(d.activeMessages, job)
+	delete(d.dequeuedMessages, job)
 
 	return nil
 }
