@@ -147,11 +147,11 @@ func (s *Server) process() error {
 		return nil
 	}
 
-	maxConcurrency := s.MaxConcurrency
-	if maxConcurrency == 0 {
-		maxConcurrency = runtime.NumCPU()
-	}
 	if s.sem == nil {
+		maxConcurrency := s.MaxConcurrency
+		if maxConcurrency == 0 {
+			maxConcurrency = runtime.NumCPU()
+		}
 		s.sem = make(chan struct{}, maxConcurrency)
 	}
 
