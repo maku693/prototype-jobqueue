@@ -25,9 +25,13 @@ type Job struct {
 	Data []byte
 }
 
+// type EnqueueResult interface {
+// 	ID() string
+// }
+
 type Enqueuer interface {
 	Enqueue(ctx context.Context, kind string, data []byte, opts *EnqueueOptions) (string, error)
-	// Enqueue(ctx context.Context, kind string, data []byte, opts *EnqueueOptions) (*EnqueueResult, error)
+	// Enqueue(ctx context.Context, kind string, data []byte, opts *EnqueueOptions) (EnqueueResult, error)
 }
 
 type EnqueueOptions struct {
@@ -36,9 +40,13 @@ type EnqueueOptions struct {
 
 var ErrNoJobsEnqueued = errors.New("no jobs enqueued")
 
+// type DequeueResult struct {
+// 	Job() *Job
+// }
+
 type Dequeuer interface {
 	Dequeue(ctx context.Context) (*Job, error)
-	// Dequeue(ctx context.Context) (*DequeueResult, error)
+	// Dequeue(ctx context.Context) (DequeueResult, error)
 	Delete(ctx context.Context, jobID string) error
 }
 
@@ -342,7 +350,7 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, kind string, data []byte, opt
 	}
 
 	if strings.HasSuffix(e.QueueUrl, ".fifo") {
-		sum := sha256.Sum256(data)
+		sum := sha256.Sum256(append([]byte(kind), data...))
 		msgDedupeId := hex.EncodeToString(sum[:])
 		sendMessageInput.MessageDeduplicationId = aws.String(msgDedupeId)
 
@@ -383,7 +391,7 @@ func NewSQSDequeuer(client *sqs.Client, queueUrl string) *SQSDequeuer {
 	}
 }
 
-var ErrMissingKyuKindAttribute = errors.New("missing jobqueue_kind attribute")
+var ErrMissingKindAttribute = errors.New("missing jobqueue_kind attribute")
 
 func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	d.mu.Lock()
@@ -439,7 +447,7 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 
 	kindAttr, ok := msg.MessageAttributes["jobqueue_kind"]
 	if !ok {
-		return nil, ErrMissingKyuKindAttribute
+		return nil, ErrMissingKindAttribute
 	}
 	kind := *kindAttr.StringValue
 

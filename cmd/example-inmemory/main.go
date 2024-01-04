@@ -45,8 +45,10 @@ func main() {
 		JobKindExample,
 		jobqueue.HandlerFunc(func(ctx context.Context, job *jobqueue.Job) error {
 			slog.Info("processing job", slog.Any("job", job))
+			var data string
+			_ = json.Unmarshal(job.Data, &data)
 			// time.Sleep(10 * time.Second)
-			slog.Info("job processed", slog.Any("job", job))
+			slog.Info("job processed", slog.Any("data", data))
 			return nil
 		}),
 	)
