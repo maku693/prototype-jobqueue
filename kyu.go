@@ -366,6 +366,7 @@ func NewSQSDequeuer(client *sqs.Client, queueUrl string) *SQSDequeuer {
 
 var (
 	ErrMissingKyuKindAttribute = errors.New("missing kyu_kind attribute")
+	ErrMessageNotInActive      = errors.New("message not in active")
 )
 
 func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
@@ -382,7 +383,7 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 
 		maxNumberOfMessages := d.MaxNumberOfMessages
 		if maxNumberOfMessages == 0 {
-			maxNumberOfMessages = 10
+			maxNumberOfMessages = 1
 		}
 
 		msgAttrNames := d.MessageAttributeNames
@@ -447,7 +448,10 @@ func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	msg := d.activeMessages[job]
+	msg, ok := d.activeMessages[job]
+	if !ok {
+		return ErrMessageNotInActive
+	}
 
 	_, err := d.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      aws.String(d.QueueUrl),
