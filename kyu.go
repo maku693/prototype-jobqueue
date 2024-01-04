@@ -437,7 +437,7 @@ func (d *SQSDequeuer) Dequeue(ctx context.Context) (*Job, error) {
 	return job, nil
 }
 
-var ErrMessageNotInActive = errors.New("message not in active")
+var ErrMessageNotDequeued = errors.New("message not dequeued")
 
 func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
 	d.mu.Lock()
@@ -445,7 +445,7 @@ func (d *SQSDequeuer) Delete(ctx context.Context, job *Job) error {
 
 	msg, ok := d.dequeuedMessages[job]
 	if !ok {
-		return ErrMessageNotInActive
+		return ErrMessageNotDequeued
 	}
 
 	_, err := d.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
