@@ -223,14 +223,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		close(activeJobsCompleted)
 	}()
 
+	sleepDuration := time.Millisecond
+	timer := time.NewTimer(sleepDuration)
+
 	for {
 		select {
 		case <-activeJobsCompleted:
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-			time.Sleep(time.Millisecond)
+		case <-timer.C:
+			timer.Reset(sleepDuration + sleepDuration)
 		}
 	}
 }
