@@ -1,4 +1,4 @@
-package kyu
+package jobqueue
 
 import (
 	"context"
@@ -17,6 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
+
+// Should encode ID and Kind into Data?
 
 type Job struct {
 	Kind string
@@ -230,6 +232,7 @@ type InMemoryQueue struct {
 }
 
 func (q *InMemoryQueue) Enqueue(ctx context.Context, job *Job, opts *EnqueueOptions) error {
+	// TODO: cleanup
 	appendJob := func() {
 		q.mu.Lock()
 		defer q.mu.Unlock()
@@ -348,7 +351,7 @@ type SQSDequeuer struct {
 	VisibilityTimeout     int32
 	WaitTimeSeconds       int32
 
-	mu              sync.Mutex
+	mu               sync.Mutex
 	receivedMessages []types.Message
 	dequeuedMessages map[*Job]types.Message
 }

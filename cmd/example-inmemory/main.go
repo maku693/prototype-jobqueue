@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/maku693/kyu"
+	"github.com/maku693/jobqueue"
 )
 
 const (
@@ -19,12 +19,12 @@ const (
 )
 
 func main() {
-	q := &kyu.InMemoryQueue{}
+	q := &jobqueue.InMemoryQueue{}
 
 	go func() {
 		for i := 0; i < 10; i++ {
 			data, _ := json.Marshal(fmt.Sprintf("hello (%d)", i))
-			job := &kyu.Job{
+			job := &jobqueue.Job{
 				Kind: JobKindExample,
 				Data: data,
 			}
@@ -32,7 +32,7 @@ func main() {
 			q.Enqueue(
 				context.Background(),
 				job,
-				&kyu.EnqueueOptions{
+				&jobqueue.EnqueueOptions{
 					PerformAt: time.Now().Add(5 * time.Second),
 				},
 			)
@@ -42,10 +42,10 @@ func main() {
 		}
 	}()
 
-	m := &kyu.Mux{}
+	m := &jobqueue.Mux{}
 	m.Handle(
 		JobKindExample,
-		kyu.HandlerFunc(func(ctx context.Context, job *kyu.Job) error {
+		jobqueue.HandlerFunc(func(ctx context.Context, job *jobqueue.Job) error {
 			slog.Info("processing job", slog.Any("job", job))
 			// time.Sleep(10 * time.Second)
 			var v string
@@ -57,7 +57,7 @@ func main() {
 		}),
 	)
 
-	s := kyu.NewServer(q, m)
+	s := jobqueue.NewServer(q, m)
 	s.OnHandlerError = func(err error) {
 		slog.Error("error processing message", slog.Any("err", err))
 	}
@@ -79,7 +79,7 @@ func main() {
 		close(shutdownCompleted)
 	}()
 
-	if err := s.Serve(); !errors.Is(err, kyu.ErrServerShuttedDown) {
+	if err := s.Serve(); !errors.Is(err, jobqueue.ErrServerShuttedDown) {
 		slog.Error("error from server", slog.Any("err", err))
 	}
 

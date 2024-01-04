@@ -1,4 +1,4 @@
-module github.com/maku693/kyu
+module github.com/maku693/jobqueue
 
 go 1.21.3
 
