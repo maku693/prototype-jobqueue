@@ -362,12 +362,12 @@ func (e *SQSEnqueuer) Enqueue(ctx context.Context, kind string, data []byte, opt
 		}
 	}
 
-	_, err := e.Client.SendMessage(ctx, sendMessageInput)
+	res, err := e.Client.SendMessage(ctx, sendMessageInput)
 	if err != nil {
 		return "", err
 	}
 
-	return "", nil
+	return *res.MessageId, nil
 }
 
 var _ Enqueuer = new(SQSEnqueuer)
